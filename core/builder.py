@@ -5,9 +5,6 @@ import logging
 import tarfile
 from core.banner import deb_searcher
 
-banner_release = "ubuntu"
-banner_kernel = "6.2.0-35-generic"
-
 with open("./src/repository-list.json", "r") as f:
     key_repository = json.loads(f.read())
 
@@ -15,7 +12,7 @@ with open("./src/repository-list.json", "r") as f:
 class Core_Builder:
     def __init__(self, banner_release: str, banner_kernel: str) -> None:
         # 默认使用本地docker服务
-        self.client = docker.from_env()
+        self.client = docker.DockerClient(base_url="unix:///run/user/1000/docker.sock")
         self.banner_release = banner_release
         self.banner_kernel = banner_kernel
 
@@ -24,7 +21,7 @@ class Core_Builder:
             "image": "ubuntu:latest",  # 替换为你想要启动的Docker镜像的名称和标签
             "command": "sleep infinity",  # 替换为要在容器内运行的命令
             "detach": True,  # 设置为True以在后台运行容器
-            "name": "profile-builder-{release}-{kernel}".format(release=banner_release, kernel=banner_kernel),
+            "name": "profile-builder-{release}-{kernel}".format(release=self.banner_release, kernel=self.banner_kernel),
         }
         self.container_name = container_params["name"]
 
@@ -50,9 +47,9 @@ class Core_Builder:
                 logging.debug(exec_result.output.decode("utf-8").strip())
 
     def container_install_debs(self):
-        repository_url = key_repository[banner_release]
+        repository_url = key_repository[self.banner_release]
         self.container.exec_run("mkdir /src")
-        debs = deb_searcher(banner_release, banner_kernel)
+        debs = deb_searcher(self.banner_release, self.banner_kernel)
         debs.sort()
         for deb in debs:
             logging.info("[+] {}".format("wget " + repository_url + deb))
@@ -120,8 +117,3 @@ class Core_Builder:
         self.extract_dwarf()
         logging.info("### Clean Container")
         self.container_clean()
-
-
-if __name__ == "__main__":
-    builder = Core_Builder(banner_release, banner_kernel)
-    builder.run()
