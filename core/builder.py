@@ -3,6 +3,8 @@ import json
 import docker
 import logging
 import tarfile
+import zipfile
+import io
 from core.banner import deb_searcher
 
 with open("./src/repository-list.json", "r") as f:
@@ -12,9 +14,12 @@ with open("./src/repository-list.json", "r") as f:
 class Core_Builder:
     def __init__(self, banner_release: str, banner_kernel: str) -> None:
         # 默认使用本地docker服务
-        self.client = docker.DockerClient(base_url="unix:///run/user/1000/docker.sock")
+        self.client = docker.DockerClient(base_url="unix:///var/run/docker.sock")
         self.banner_release = banner_release
         self.banner_kernel = banner_kernel
+        self.output_folder = os.path.join(os.getcwd(), "output")
+        if not os.path.exists(self.output_folder):
+            os.makedirs(self.output_folder)
 
     def container_start(self):
         container_params = {
@@ -31,15 +36,20 @@ class Core_Builder:
     def container_change_repository(self):
         match self.banner_release:
             case "ubuntu":
-                logging.info("[+] {}".format("sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list"))
-                self.container.exec_run("sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list")
-                logging.info("[+] {}".format("sed -i 's@//.*security.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list"))
-                self.container.exec_run("sed -i 's@//.*security.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list")
+                logging.info(
+                    "[+] {}".format("sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list"))
+                self.container.exec_run(
+                    "sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list")
+                logging.info(
+                    "[+] {}".format("sed -i 's@//.*security.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list"))
+                self.container.exec_run(
+                    "sed -i 's@//.*security.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list")
         exec_result = self.container.exec_run("apt-get update")
         logging.debug(exec_result.output.decode("utf-8").strip())
 
     def container_install_dependency(self):
-        dependency_ubuntu = ["wget", "unzip", "dwarfdump", "build-essential", "kmod", "linux-base", "gcc-10", "gcc-11", "gcc-12"]
+        dependency_ubuntu = ["wget", "unzip", "dwarfdump", "build-essential", "kmod", "linux-base", "gcc-10", "gcc-11",
+                             "gcc-12"]
         match self.banner_release:
             case "ubuntu":
                 logging.info("[+] {}".format("apt-get install -y " + " ".join(dependency_ubuntu)))
@@ -72,7 +82,6 @@ class Core_Builder:
             logging.debug(exec_result.output.decode("utf-8").strip())
 
     def container_build_dwarf(self):
-        # logging.info("unpak source code")
         self.container.exec_run("mkdir /src")
         path_tool = "tool.zip.tar"
         path_dest = "/src/tool.zip"
@@ -87,16 +96,43 @@ class Core_Builder:
         exec_result = self.container.exec_run('bash -c "cd /src/linux;make"')
         logging.debug(exec_result.output.decode("utf-8").strip())
 
-    def extract_dwarf(self):
-        archive, stats = self.client.api.get_archive(container=self.container_name, path="/src/linux/module.dwarf")
 
-        folder_path = os.getcwd() + "/output"
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-        else:
-            with open(os.getcwd() + "/output/module.dwarf", "wb") as f:
-                for chunk in archive:
-                    f.write(chunk)
+    def extract_and_write_file(self, source_path, target_path):
+        bits, _ = self.container.get_archive(source_path)
+
+        file_like_object = io.BytesIO()
+        for chunk in bits:
+            file_like_object.write(chunk)
+        file_like_object.seek(0)
+
+        with tarfile.open(fileobj=file_like_object, mode='r:*') as tar:
+            member = tar.next()
+
+            if member is not None:
+                file_data = tar.extractfile(member).read()
+                with open(target_path, 'wb') as f:
+                    f.write(file_data)
+
+
+    def extract_dwarf(self):
+        self.extract_and_write_file(source_path="/src/linux/module.dwarf",
+                                    target_path=self.output_folder + "/module.dwarf")
+
+    def extract_System_map(self):
+        system_map_path = f"/boot/System.map-{self.banner_kernel}"
+        system_map_filename = os.path.basename(system_map_path)
+
+        self.extract_and_write_file(system_map_path, os.path.join(self.output_folder, system_map_filename))
+
+
+    def Zip_profile(self):
+        dwarf_path = os.path.join(self.output_folder, "module.dwarf")
+        system_map_path = os.path.join(self.output_folder, f"System.map-{self.banner_kernel}")
+        zip_filename = os.path.join(self.output_folder, f"{self.banner_release}_{self.banner_kernel}.zip")
+
+        with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            zipf.write(dwarf_path, arcname='module.dwarf')
+            zipf.write(system_map_path, arcname=f"System.map-{self.banner_kernel}")
 
     def container_clean(self):
         self.container.stop()
@@ -115,5 +151,9 @@ class Core_Builder:
         self.container_build_dwarf()
         logging.info("### Extract dwarf file")
         self.extract_dwarf()
+        logging.info("### Extract System.map file")
+        self.extract_System_map()
+        logging.info("### Zip profile")
+        self.Zip_profile()
         logging.info("### Clean Container")
         self.container_clean()
