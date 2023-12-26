@@ -34,27 +34,20 @@ class Core_Builder:
         self.container = self.client.containers.run(**container_params)
 
     def container_change_repository(self):
-        match self.banner_release:
-            case "ubuntu":
-                logging.info(
-                    "[+] {}".format("sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list"))
-                self.container.exec_run(
-                    "sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list")
-                logging.info(
-                    "[+] {}".format("sed -i 's@//.*security.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list"))
-                self.container.exec_run(
-                    "sed -i 's@//.*security.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list")
-        exec_result = self.container.exec_run("apt-get update")
-        logging.debug(exec_result.output.decode("utf-8").strip())
+	    if self.banner_release == "ubuntu":
+	        logging.info("[+] {}".format("sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list"))
+	        self.container.exec_run("sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list")
+	        logging.info("[+] {}".format("sed -i 's@//.*security.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list"))
+	        self.container.exec_run("sed -i 's@//.*security.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list")
+	    exec_result = self.container.exec_run("apt-get update")
+	    logging.debug(exec_result.output.decode("utf-8").strip())
 
     def container_install_dependency(self):
-        dependency_ubuntu = ["wget", "unzip", "dwarfdump", "build-essential", "kmod", "linux-base", "gcc-10", "gcc-11",
-                             "gcc-12"]
-        match self.banner_release:
-            case "ubuntu":
-                logging.info("[+] {}".format("apt-get install -y " + " ".join(dependency_ubuntu)))
-                exec_result = self.container.exec_run("apt-get install -y " + " ".join(dependency_ubuntu))
-                logging.debug(exec_result.output.decode("utf-8").strip())
+	    dependency_ubuntu = ["wget", "unzip", "dwarfdump", "build-essential", "kmod", "linux-base", "gcc-10", "gcc-11", "gcc-12"]
+	    if self.banner_release == "ubuntu":
+	        logging.info("[+] {}".format("apt-get install -y " + " ".join(dependency_ubuntu)))
+	        exec_result = self.container.exec_run("apt-get install -y " + " ".join(dependency_ubuntu))
+	        logging.debug(exec_result.output.decode("utf-8").strip())
 
     def container_install_debs(self):
         repository_url = key_repository[self.banner_release]
